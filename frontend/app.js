@@ -1,7 +1,7 @@
 // Determine WebSocket URL based on environment
 const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:";
 // IMPORTANT: Once deployed to Render, put your actual Render URL here
-const WS_URL = isLocal ? `ws://localhost:8080/ws` : `wss://YOUR-APP-NAME.onrender.com/ws`;
+const WS_URL = isLocal ? `ws://localhost:8080/ws` : `wss://mahjong-server-6zi9.onrender.com/ws`;
 
 const ws = new WebSocket(WS_URL);
 window.useSimpleTiles = false;
