@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mahjong Realtime</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Landing Screen -->
+        <div id="landing" class="screen">
+            <h1 class="title">MAHJONG</h1>
+            <div class="card">
+                <input type="text" id="nickname" placeholder="Enter your nickname" autocomplete="off" />
+                <div class="actions">
+                    <button id="btn-create">Create a New Room</button>
+                    <div class="divider">or</div>
+                    <input type="text" id="room-code" placeholder="Enter Room Code" autocomplete="off" />
+                    <button id="btn-join" class="btn-secondary">Join Room</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Lobby / Waiting Room Screen -->
+        <div id="lobby" class="screen hidden">
+            <div class="card">
+                <h2>Waiting Room</h2>
+                <div class="room-code-display">
+                    Room Code: <span id="display-room-code" class="highlight">---</span>
+                </div>
+                
+                <div class="players-container">
+                    <h3>Players <span class="count">(1/4)</span></h3>
+                    <ul class="players-list" id="players-list">
+                        <li>You (Host)</li>
+                        <li class="empty-slot">Waiting for player...</li>
+                        <li class="empty-slot">Waiting for player...</li>
+                        <li class="empty-slot">Waiting for player...</li>
+                    </ul>
+                </div>
+                
+                <button id="btn-start" disabled>Start Game</button>
+            </div>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="game" class="screen hidden">
+            <div id="opponents-area" class="opponents-container">
+                <!-- Opponent info populated dynamically -->
+            </div>
+
+            <div style="position: absolute; top: 1rem; right: 1rem;">
+                <button id="toggle-style" class="btn-secondary" style="padding: 0.5rem 1rem; font-size: 0.8rem;">Toggle Basic Tiles</button>
+            </div>
+
+            <div class="center-board">
+                <div class="turn-indicator">
+                    <h2 id="current-turn-display">Waiting...</h2>
+                    <div id="turn-timer" class="timer-badge">--</div>
+                </div>
+                
+                <div class="discard-area">
+                    <h3>Center Discard Pool</h3>
+                    <div id="discard-pool" class="discard-pool"></div>
+                </div>
+            </div>
+
+            <div class="player-area">
+                <div id="melds-area" class="melds-container"></div>
+                <div class="hand-container" id="my-hand"></div>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
