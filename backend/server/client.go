@@ -138,6 +138,15 @@ func (c *Client) handleAction(m IncomingMessage) {
 				Action: "declare_mahjong",
 			}
 		}
+		
+	case "execute_bot_alg":
+		if c.Room != nil {
+			c.Room.GameAction <- GameAction{
+				Client: c,
+				Action: "execute_bot_alg",
+				Data:   m.Data,
+			}
+		}
 
 	case "skip":
 		if c.Room != nil {

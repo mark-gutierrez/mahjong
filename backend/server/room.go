@@ -132,10 +132,14 @@ func (r *Room) Run() {
 				continue
 			}
 
-			if action.Action == "auto_discard" {
+			if action.Action == "execute_bot_alg" || action.Action == "auto_discard" {
 				if r.Game.Interrupt != nil && r.Game.Interrupt.Active { continue }
 				currentTurnPlayer := r.Game.TurnOrder[r.Game.CurrentTurnIdx]
 				if currentTurnPlayer != action.Client.Nickname { continue }
+				
+				if action.Action == "execute_bot_alg" && r.TurnTimer != nil {
+					r.TurnTimer.Stop()
+				}
 				
 				var visibleTiles []engine.Tile
 				visibleTiles = append(visibleTiles, r.Game.CenterDiscards...)
@@ -151,6 +155,10 @@ func (r *Room) Run() {
 				}
 				
 				botAlg := r.Game.Players[currentTurnPlayer].Algorithm
+				if action.Action == "execute_bot_alg" {
+					botAlg = action.Data
+				}
+				
 				bestTileID, reason := engine.RunBotAlgorithm(botAlg, r.Game.Players[currentTurnPlayer], visibleTiles, opponents)
 				r.Game.Players[currentTurnPlayer].ActionLog = reason
 				

@@ -24,6 +24,10 @@ function renderStick(x, y, color) {
             <line x1="${x}" y1="${y-10}" x2="${x}" y2="${y+10}" stroke="white" stroke-width="2" opacity="0.5"/>`;
 }
 
+window.executeBotAlg = (algName) => {
+    ws.send(JSON.stringify({ action: "execute_bot_alg", data: algName }));
+};
+
 function getTileFace(tile) {
     if (window.useSimpleTiles) {
         return `<span class="val">${tile.value}</span><span class="suit">${tile.suit}</span>`;
@@ -163,6 +167,17 @@ ws.onmessage = (event) => {
         turnDisplay.innerHTML = isMyTurn ? "<strong>Your Turn!</strong>" : `Waiting on <strong>${data.currentTurn}</strong>`;
         if (isMyTurn) turnDisplay.style.color = 'var(--accent)';
         else turnDisplay.style.color = 'var(--text)';
+
+        const botQuickActions = document.getElementById('bot-quick-actions');
+        if (botQuickActions) {
+            if (isMyTurn && window.showBotActions && (!data.actions || data.actions.length === 0)) {
+                botQuickActions.style.opacity = '1';
+                botQuickActions.style.pointerEvents = 'auto';
+            } else {
+                botQuickActions.style.opacity = '0';
+                botQuickActions.style.pointerEvents = 'none';
+            }
+        }
 
         clearInterval(window.turnTimerInterval);
         const updateTimer = () => {
@@ -496,6 +511,12 @@ document.getElementById('btn-start').addEventListener('click', () => {
     showScreen('game');
 });
 
+// Leave Room (from Lobby)
+document.getElementById('btn-leave-room').addEventListener('click', () => {
+    // A full reload ensures clean state and drops the websocket, cleaning up the backend room.
+    window.location.reload();
+});
+
 // For testing purposes: Enable the start button immediately
 document.getElementById('btn-start').removeAttribute('disabled');
 
@@ -512,6 +533,18 @@ document.getElementById('toggle-style').addEventListener('click', () => {
 document.getElementById('toggle-analytics').addEventListener('click', () => {
     window.showAnalytics = !window.showAnalytics;
     document.getElementById('toggle-analytics').innerText = window.showAnalytics ? "Hide Analytics" : "Show Analytics";
+    if (lastGameDataRaw) {
+        ws.onmessage({ data: lastGameDataRaw });
+    }
+});
+
+// Toggle Bot Quick Actions
+window.showBotActions = false;
+document.getElementById('toggle-bot-actions').addEventListener('click', () => {
+    window.showBotActions = !window.showBotActions;
+    const btn = document.getElementById('toggle-bot-actions');
+    btn.innerText = window.showBotActions ? "Disable Bot Actions" : "Enable Bot Actions";
+    btn.style.background = window.showBotActions ? "#ef4444" : "#8b5cf6";
     if (lastGameDataRaw) {
         ws.onmessage({ data: lastGameDataRaw });
     }
