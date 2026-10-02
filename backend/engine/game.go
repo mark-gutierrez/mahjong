@@ -7,9 +7,10 @@ import (
 )
 
 type PlayerState struct {
-	Hand     []Tile   `json:"hand"`
-	Discards []Tile   `json:"discards"`
-	Melds    [][]Tile `json:"melds"`
+	Hand      []Tile   `json:"hand"`
+	Discards  []Tile   `json:"discards"`
+	Melds     [][]Tile `json:"melds"`
+	Algorithm string   `json:"algorithm"`
 }
 
 type InterruptState struct {

@@ -5,6 +5,7 @@ import (
 	"log"
 	"fmt"
 	"time"
+	"math/rand"
 	
 	"mahjong-go/engine"
 )
@@ -28,6 +29,7 @@ type Room struct {
 	Game         *engine.Game
 	IsBot        map[string]bool
 	Disconnected map[string]bool
+	Scores       map[string]int
 	TurnTimer    *time.Timer
 	ActionDeadline int64
 }
@@ -44,6 +46,7 @@ func NewRoom(id string, hub *Hub) *Room {
 		GameAction:   make(chan GameAction),
 		IsBot:        make(map[string]bool),
 		Disconnected: make(map[string]bool),
+		Scores:       make(map[string]int),
 	}
 }
 
@@ -108,6 +111,16 @@ func (r *Room) Run() {
 			}
 			
 			r.Game = engine.NewGame(playerNames)
+			
+			algs := []string{"Heuristic", "Shanten", "Betaori", "Push/Fold"}
+			for _, pName := range playerNames {
+				if r.IsBot[pName] {
+					r.Game.Players[pName].Algorithm = algs[rand.Intn(len(algs))]
+				} else {
+					r.Game.Players[pName].Algorithm = "Human" // Default for frontend to know
+				}
+			}
+			
 			r.Game.Deal() // Shuffle and deal 13/14 tiles
 			
 			log.Printf("Game started in room %s!", r.ID)
@@ -124,7 +137,22 @@ func (r *Room) Run() {
 				currentTurnPlayer := r.Game.TurnOrder[r.Game.CurrentTurnIdx]
 				if currentTurnPlayer != action.Client.Nickname { continue }
 				
-				bestTileID := engine.GetBestDiscard(r.Game.Players[currentTurnPlayer].Hand)
+				var visibleTiles []engine.Tile
+				visibleTiles = append(visibleTiles, r.Game.CenterDiscards...)
+				var opponents []*engine.PlayerState
+				
+				for pName, p := range r.Game.Players {
+					for _, meld := range p.Melds {
+						visibleTiles = append(visibleTiles, meld...)
+					}
+					if pName != currentTurnPlayer {
+						opponents = append(opponents, p)
+					}
+				}
+				
+				botAlg := r.Game.Players[currentTurnPlayer].Algorithm
+				bestTileID := engine.RunBotAlgorithm(botAlg, r.Game.Players[currentTurnPlayer].Hand, visibleTiles, opponents)
+				
 				hasInterrupts := r.Game.DiscardTile(currentTurnPlayer, bestTileID)
 				if hasInterrupts {
 					r.triggerInterruptLogic()
@@ -206,6 +234,7 @@ func (r *Room) triggerInterruptLogic() {
 		if r.IsBot[pName] || r.Disconnected[pName] {
 			go func(botName string, acts []string) {
 				time.Sleep(1500 * time.Millisecond)
+				if r.Game == nil || r.Game.Players[botName] == nil { return }
 				bestAct := engine.GetBestSteal(r.Game.Players[botName].Hand, acts)
 				if bestAct != "skip" {
 					r.GameAction <- GameAction{Action: "execute_steal", Data: bestAct, Client: &Client{Nickname: botName}}
@@ -229,9 +258,10 @@ func (r *Room) BroadcastGameState() {
 		for _, pName := range r.Game.TurnOrder {
 			pState := r.Game.Players[pName]
 			publicPlayers = append(publicPlayers, map[string]interface{}{
-				"nickname": pName,
-				"melds":    pState.Melds,
-				"discards": pState.Discards,
+				"nickname":  pName,
+				"melds":     pState.Melds,
+				"discards":  pState.Discards,
+				"algorithm": pState.Algorithm,
 			})
 		}
 	}
@@ -260,7 +290,15 @@ func (r *Room) BroadcastGameState() {
 			"players":        publicPlayers,
 			"actionDeadline": r.ActionDeadline,
 		})
-		client.Send <- response
+		
+		select {
+		case client.Send <- response:
+		default:
+			log.Printf("Client %s send buffer full, dropping client", client.Nickname)
+			delete(r.Clients, client)
+			close(client.Send)
+			r.Disconnected[client.Nickname] = true
+		}
 	}
 }
 
@@ -268,12 +306,36 @@ func (r *Room) BroadcastGameOver(winner string) {
 	if r.TurnTimer != nil {
 		r.TurnTimer.Stop()
 	}
+	
+	roundPoints := make(map[string]int)
+	if r.Game != nil {
+		for _, pName := range r.Game.TurnOrder {
+			if pName == winner {
+				roundPoints[pName] = 50
+				r.Scores[pName] += 50
+			} else {
+				roundPoints[pName] = -10
+				r.Scores[pName] -= 10
+			}
+		}
+	}
+	
 	for client := range r.Clients {
 		response, _ := json.Marshal(map[string]interface{}{
-			"type":   "game_over",
-			"winner": winner,
+			"type":        "game_over",
+			"winner":      winner,
+			"roundPoints": roundPoints,
+			"totalScores": r.Scores,
 		})
-		client.Send <- response
+		
+		select {
+		case client.Send <- response:
+		default:
+			log.Printf("Client %s send buffer full, dropping client", client.Nickname)
+			delete(r.Clients, client)
+			close(client.Send)
+			r.Disconnected[client.Nickname] = true
+		}
 	}
 	r.Game = nil
 }

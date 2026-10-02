@@ -5,6 +5,7 @@ const WS_URL = isLocal ? `ws://localhost:8080/ws` : `wss://mahjong-server-6zi9.o
 
 const ws = new WebSocket(WS_URL);
 window.useSimpleTiles = false;
+window.showAnalytics = false;
 let lastGameDataRaw = null;
 
 ws.onopen = () => {
@@ -206,8 +207,10 @@ ws.onmessage = (event) => {
                 
                 const oppCard = document.createElement('div');
                 oppCard.className = 'opponent-card' + (isOppTurn ? ' active-turn' : '');
+                const algName = p.algorithm ? p.algorithm.toUpperCase() : 'HUMAN';
                 oppCard.innerHTML = `
                     <div class="opp-name">${p.nickname}</div>
+                    <div class="opp-alg" style="font-size: 0.65rem; color: #a5b4fc; letter-spacing: 1px; margin-bottom: 5px; opacity: 0.8;">[${algName}]</div>
                     <div class="opp-discard-label">Latest Discard</div>
                     ${discardHtml}
                     ${meldsHtml}
@@ -223,10 +226,83 @@ ws.onmessage = (event) => {
             if (a.suit === b.suit) return a.value.localeCompare(b.value);
             return a.suit.localeCompare(b.suit);
         });
-        sortedHand.forEach(tile => {
+        // Analytics: Discard Probability
+        const counts = {};
+        sortedHand.forEach(t => {
+            counts[t.suit + t.value] = (counts[t.suit + t.value] || 0) + 1;
+        });
+        
+        const discardCounts = {};
+        if (data.discards) {
+            data.discards.forEach(t => {
+                discardCounts[t.suit + t.value] = (discardCounts[t.suit + t.value] || 0) + 1;
+            });
+        }
+        if (data.players) {
+            data.players.forEach(p => {
+                if (p.melds) {
+                    p.melds.forEach(meld => {
+                        meld.forEach(t => {
+                            discardCounts[t.suit + t.value] = (discardCounts[t.suit + t.value] || 0) + 1;
+                        });
+                    });
+                }
+            });
+        }
+
+        const weights = sortedHand.map(t => {
+            const key = t.suit + t.value;
+            if (counts[key] >= 2) return 0; // Pairs/Pungs are highly valuable
+            const isHonor = ['wind', 'dragon', 'flower', 'season'].includes(t.suit.toLowerCase());
+            const isTerminal = t.value === '1' || t.value === '9';
+            
+            let weight = (isHonor || isTerminal) ? 100 : 60;
+            
+            if (!isHonor && !isTerminal) {
+                // Check proto-sequences for middle tiles
+                const valInt = parseInt(t.value);
+                let hasNeighbor = false;
+                let deadNeighbors = 0;
+                for (let offset of [-2, -1, 1, 2]) {
+                    const nVal = valInt + offset;
+                    if (nVal >= 1 && nVal <= 9) {
+                        const nKey = t.suit + nVal.toString();
+                        if (counts[nKey]) hasNeighbor = true;
+                        if (discardCounts[nKey]) deadNeighbors += discardCounts[nKey];
+                    }
+                }
+                if (hasNeighbor) weight = 20;
+                
+                // Penalty: if sequence builders are dead, it's harder to build sequences
+                weight += (deadNeighbors * 15);
+            }
+            
+            // Penalty: if identical tiles are dead, it's harder to build a pair
+            if (discardCounts[key]) {
+                weight += (discardCounts[key] * 25);
+            }
+            
+            return Math.min(100, weight);
+        });
+
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+        sortedHand.forEach((tile, index) => {
             const tileDiv = document.createElement('div');
             tileDiv.className = 'tile' + (isMyTurn ? ' interactive' : '');
+            tileDiv.style.position = 'relative';
             tileDiv.innerHTML = getTileFace(tile);
+            
+            // Render Analytics Badge
+            if (window.showAnalytics) {
+                const pct = totalWeight === 0 ? 0 : Math.round((weights[index] / totalWeight) * 100);
+                const badgeColor = pct >= 20 ? '#ef4444' : (pct > 0 ? '#f59e0b' : '#10b981');
+                const badge = document.createElement('div');
+                badge.style.cssText = `position: absolute; top: -8px; right: -8px; background: ${badgeColor}; color: white; font-size: 11px; font-weight: 900; padding: 2px 5px; border-radius: 4px; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.2);`;
+                badge.innerText = `${pct}%`;
+                tileDiv.appendChild(badge);
+            }
+
             if (isMyTurn) {
                 tileDiv.addEventListener('click', () => {
                     ws.send(JSON.stringify({ action: "discard_tile", tileId: tile.id }));
@@ -308,10 +384,36 @@ ws.onmessage = (event) => {
     }
 
     if (data.type === "game_over") {
-        alert("\n\n🎉🎉 MAHJONG! 🎉🎉\n\nThe winner is: " + data.winner + "\n\n");
         showScreen('lobby');
-        document.getElementById('room-id-display').innerText = "Game Over! You can create a new room.";
-        document.getElementById('btn-start').disabled = true;
+        
+        let resultsDiv = document.getElementById('game-results');
+        if (!resultsDiv) {
+            resultsDiv = document.createElement('div');
+            resultsDiv.id = 'game-results';
+            resultsDiv.style.cssText = "margin: 20px 0; padding: 15px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);";
+            const btn = document.getElementById('btn-start');
+            btn.parentNode.insertBefore(resultsDiv, btn);
+        }
+        
+        let html = `<h3 style="color: var(--accent); margin-top: 0;">🎉 ${data.winner} won the round! 🎉</h3>`;
+        html += `<table style="width: 100%; text-align: left; border-collapse: collapse; margin-top: 10px;">
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);"><th style="padding-bottom:5px;">Player</th><th style="padding-bottom:5px;">Round Points</th><th style="padding-bottom:5px;">Total Score</th></tr>`;
+            
+        for (const [pName, score] of Object.entries(data.totalScores || {})) {
+            const roundScore = data.roundPoints ? data.roundPoints[pName] : 0;
+            const roundStr = roundScore > 0 ? `+${roundScore}` : `${roundScore}`;
+            const roundColor = roundScore > 0 ? '#10b981' : '#ef4444';
+            html += `<tr>
+                <td style="padding: 8px 0;">${pName}</td>
+                <td style="padding: 8px 0; color: ${roundColor};">${roundStr}</td>
+                <td style="padding: 8px 0; font-weight: bold;">${score}</td>
+            </tr>`;
+        }
+        html += `</table>`;
+        resultsDiv.innerHTML = html;
+        
+        document.getElementById('btn-start').innerText = "Play Next Round";
+        document.getElementById('btn-start').disabled = false;
     }
 };
 
@@ -387,6 +489,15 @@ document.getElementById('toggle-style').addEventListener('click', () => {
     window.useSimpleTiles = !window.useSimpleTiles;
     if (lastGameDataRaw) {
         // Re-trigger the render with the last known data packet
+        ws.onmessage({ data: lastGameDataRaw });
+    }
+});
+
+// Toggle Analytics
+document.getElementById('toggle-analytics').addEventListener('click', () => {
+    window.showAnalytics = !window.showAnalytics;
+    document.getElementById('toggle-analytics').innerText = window.showAnalytics ? "Hide Analytics" : "Show Analytics";
+    if (lastGameDataRaw) {
         ws.onmessage({ data: lastGameDataRaw });
     }
 });
