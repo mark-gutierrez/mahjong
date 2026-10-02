@@ -11,6 +11,7 @@ type PlayerState struct {
 	Discards  []Tile   `json:"discards"`
 	Melds     [][]Tile `json:"melds"`
 	Algorithm string   `json:"algorithm"`
+	ActionLog string   `json:"actionLog"`
 }
 
 type InterruptState struct {
@@ -20,6 +21,20 @@ type InterruptState struct {
 	Actions       map[string][]string
 }
 
+type PlayerSnapshot struct {
+	Hand      []Tile   `json:"hand"`
+	Discards  []Tile   `json:"discards"`
+	Melds     [][]Tile `json:"melds"`
+	Algorithm string   `json:"algorithm"`
+	ActionLog string   `json:"actionLog"`
+}
+
+type ReplaySnapshot struct {
+	CurrentTurn    string                    `json:"currentTurn"`
+	CenterDiscards []Tile                    `json:"centerDiscards"`
+	Players        map[string]PlayerSnapshot `json:"players"`
+}
+
 type Game struct {
 	Wall           []Tile
 	Players        map[string]*PlayerState
@@ -27,6 +42,7 @@ type Game struct {
 	CurrentTurnIdx int
 	CenterDiscards []Tile
 	Interrupt      *InterruptState
+	History        []ReplaySnapshot
 }
 
 func NewGame(playerNames []string) *Game {
@@ -354,4 +370,32 @@ func (g *Game) NextTurn() string {
 	}
 
 	return nextPlayer
+}
+
+// RecordSnapshot captures the full public and private state for replay logs
+func (g *Game) RecordSnapshot() {
+	snap := ReplaySnapshot{
+		CurrentTurn:    g.TurnOrder[g.CurrentTurnIdx],
+		CenterDiscards: make([]Tile, len(g.CenterDiscards)),
+		Players:        make(map[string]PlayerSnapshot),
+	}
+	copy(snap.CenterDiscards, g.CenterDiscards)
+	
+	for name, ps := range g.Players {
+		psnap := PlayerSnapshot{
+			Hand:      make([]Tile, len(ps.Hand)),
+			Discards:  make([]Tile, len(ps.Discards)),
+			Melds:     make([][]Tile, len(ps.Melds)),
+			Algorithm: ps.Algorithm,
+			ActionLog: ps.ActionLog,
+		}
+		copy(psnap.Hand, ps.Hand)
+		copy(psnap.Discards, ps.Discards)
+		for i, m := range ps.Melds {
+			psnap.Melds[i] = make([]Tile, len(m))
+			copy(psnap.Melds[i], m)
+		}
+		snap.Players[name] = psnap
+	}
+	g.History = append(g.History, snap)
 }

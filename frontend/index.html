@@ -21,6 +21,13 @@
                     <button id="btn-join" class="btn-secondary">Join Room</button>
                 </div>
             </div>
+            
+            <div id="saved-replays-container" style="margin-top: 30px; width: 100%; max-width: 600px;">
+                <h3 style="color: rgba(255,255,255,0.7); border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 10px; margin-bottom: 15px;">Local Replays</h3>
+                <div id="replays-list-ui" style="display: flex; flex-direction: column; gap: 10px;">
+                    <!-- Replay list injected here -->
+                </div>
+            </div>
         </div>
         
         <!-- Lobby / Waiting Room Screen -->
@@ -73,7 +80,27 @@
                 <div class="hand-container" id="my-hand"></div>
             </div>
         </div>
+        <!-- Replay Screen -->
+        <div id="replay" class="screen hidden">
+            <div class="card" style="max-width: 900px; width: 100%;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>Game Replay Viewer</h2>
+                    <button id="btn-exit-replay" class="btn-secondary">Back to Lobby</button>
+                </div>
+                
+                <div id="replay-board" style="display: flex; flex-direction: column; gap: 20px; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 8px;">
+                    <!-- Replay dynamically rendered here -->
+                </div>
+
+                <div style="margin-top: 20px; display: flex; align-items: center; gap: 15px;">
+                    <button id="btn-replay-prev" class="btn-secondary">◀ Prev Turn</button>
+                    <input type="range" id="replay-slider" min="0" max="0" value="0" style="flex: 1;" />
+                    <button id="btn-replay-next" class="btn-secondary">Next Turn ▶</button>
+                </div>
+            </div>
+        </div>
     </div>
+    <script src="replay.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

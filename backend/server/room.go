@@ -151,13 +151,18 @@ func (r *Room) Run() {
 				}
 				
 				botAlg := r.Game.Players[currentTurnPlayer].Algorithm
-				bestTileID := engine.RunBotAlgorithm(botAlg, r.Game.Players[currentTurnPlayer].Hand, visibleTiles, opponents)
+				bestTileID, reason := engine.RunBotAlgorithm(botAlg, r.Game.Players[currentTurnPlayer], visibleTiles, opponents)
+				r.Game.Players[currentTurnPlayer].ActionLog = reason
 				
 				hasInterrupts := r.Game.DiscardTile(currentTurnPlayer, bestTileID)
 				if hasInterrupts {
 					r.triggerInterruptLogic()
 					r.BroadcastGameState()
 				} else {
+					if len(r.Game.Wall) == 0 {
+						r.BroadcastGameOver("DRAW")
+						continue
+					}
 					r.Game.NextTurn()
 					r.triggerTurnLogic()
 					r.BroadcastGameState()
@@ -171,6 +176,10 @@ func (r *Room) Run() {
 					r.triggerInterruptLogic()
 					r.BroadcastGameState()
 				} else {
+					if len(r.Game.Wall) == 0 {
+						r.BroadcastGameOver("DRAW")
+						continue
+					}
 					r.Game.NextTurn()
 					r.triggerTurnLogic()
 					r.BroadcastGameState()
@@ -178,11 +187,35 @@ func (r *Room) Run() {
 			}
 			
 			if action.Action == "timeout" || action.Action == "skip" {
-				if r.Game.Interrupt != nil && r.Game.Interrupt.Active && r.Game.Interrupt.DiscarderName == action.Client.Nickname {
-					r.Game.CancelInterrupt()
-					r.Game.NextTurn()
-					r.triggerTurnLogic()
-					r.BroadcastGameState()
+				if r.Game.Interrupt != nil && r.Game.Interrupt.Active {
+					if action.Action == "timeout" && r.Game.Interrupt.DiscarderName == action.Client.Nickname {
+						// Global timeout (4s) expired, force resolve
+						r.Game.CancelInterrupt()
+						if len(r.Game.Wall) == 0 {
+							r.BroadcastGameOver("DRAW")
+							continue
+						}
+						r.Game.NextTurn()
+						r.triggerTurnLogic()
+						r.BroadcastGameState()
+					} else if action.Action == "skip" {
+						_, canInterrupt := r.Game.Interrupt.Actions[action.Client.Nickname]
+						if canInterrupt {
+							// Remove this player's actions since they skipped
+							delete(r.Game.Interrupt.Actions, action.Client.Nickname)
+							// If no one else has pending actions, resolve immediately
+							if len(r.Game.Interrupt.Actions) == 0 {
+								r.Game.CancelInterrupt()
+								if len(r.Game.Wall) == 0 {
+									r.BroadcastGameOver("DRAW")
+									continue
+								}
+								r.Game.NextTurn()
+								r.triggerTurnLogic()
+								r.BroadcastGameState()
+							}
+						}
+					}
 				}
 			}
 
@@ -255,6 +288,7 @@ func (r *Room) triggerInterruptLogic() {
 func (r *Room) BroadcastGameState() {
 	var publicPlayers []map[string]interface{}
 	if r.Game != nil {
+		r.Game.RecordSnapshot()
 		for _, pName := range r.Game.TurnOrder {
 			pState := r.Game.Players[pName]
 			publicPlayers = append(publicPlayers, map[string]interface{}{
@@ -320,12 +354,18 @@ func (r *Room) BroadcastGameOver(winner string) {
 		}
 	}
 	
+	var history []engine.ReplaySnapshot
+	if r.Game != nil {
+		history = r.Game.History
+	}
+	
 	for client := range r.Clients {
 		response, _ := json.Marshal(map[string]interface{}{
 			"type":        "game_over",
 			"winner":      winner,
 			"roundPoints": roundPoints,
 			"totalScores": r.Scores,
+			"replayLog":   history,
 		})
 		
 		select {

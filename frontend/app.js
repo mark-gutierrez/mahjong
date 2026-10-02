@@ -386,6 +386,20 @@ ws.onmessage = (event) => {
     if (data.type === "game_over") {
         showScreen('lobby');
         
+        // Save to IndexedDB via replay.js function
+        if (data.replayLog && window.saveReplay) {
+            window.saveReplay(data.replayLog, data.winner, data.roundPoints).then(id => {
+                if (id) {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-secondary';
+                    btn.style.marginTop = '10px';
+                    btn.innerText = '🎥 View Replay of this Game';
+                    btn.onclick = () => window.showReplayScreen({history: data.replayLog});
+                    document.getElementById('game-results').appendChild(btn);
+                }
+            });
+        }
+        
         let resultsDiv = document.getElementById('game-results');
         if (!resultsDiv) {
             resultsDiv = document.createElement('div');
@@ -426,7 +440,8 @@ ws.onclose = () => {
 const screens = {
     landing: document.getElementById('landing'),
     lobby: document.getElementById('lobby'),
-    game: document.getElementById('game')
+    game: document.getElementById('game'),
+    replay: document.getElementById('replay')
 };
 
 function showScreen(screenName) {
