@@ -23,9 +23,12 @@ async function saveReplay(history, winner, roundPoints) {
 // Replay State
 let currentReplay = null;
 let currentTurnIdx = 0;
+let currentReplayWinner = null;
+let autoplayInterval = null;
 
 function showReplayScreen(replayData) {
     currentReplay = replayData.history;
+    currentReplayWinner = replayData.winner;
     currentTurnIdx = 0;
     
     document.getElementById('replay-slider').max = currentReplay.length - 1;
@@ -224,11 +227,20 @@ function renderReplayTurn(idx) {
     dHtml += `</div>`;
     discardsDiv.innerHTML = dHtml;
     board.appendChild(discardsDiv);
+    
+    renderAnalyticsGraph(currentReplay, currentReplayWinner, idx);
 }
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('btn-exit-replay').onclick = () => showScreen('lobby');
+    document.getElementById('btn-exit-replay').onclick = () => {
+        if (autoplayInterval) {
+            clearInterval(autoplayInterval);
+            autoplayInterval = null;
+            document.getElementById('btn-replay-autoplay').innerText = "▶ Autoplay";
+        }
+        showScreen('lobby');
+    };
     
     document.getElementById('btn-replay-prev').onclick = () => {
         if (currentTurnIdx > 0) {
@@ -249,6 +261,28 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('replay-slider').oninput = (e) => {
         currentTurnIdx = parseInt(e.target.value);
         renderReplayTurn(currentTurnIdx);
+    };
+    
+    document.getElementById('btn-replay-autoplay').onclick = () => {
+        const btn = document.getElementById('btn-replay-autoplay');
+        if (autoplayInterval) {
+            clearInterval(autoplayInterval);
+            autoplayInterval = null;
+            btn.innerText = "▶ Autoplay";
+        } else {
+            btn.innerText = "⏸ Pause";
+            autoplayInterval = setInterval(() => {
+                if (currentTurnIdx < currentReplay.length - 1) {
+                    currentTurnIdx++;
+                    document.getElementById('replay-slider').value = currentTurnIdx;
+                    renderReplayTurn(currentTurnIdx);
+                } else {
+                    clearInterval(autoplayInterval);
+                    autoplayInterval = null;
+                    btn.innerText = "▶ Autoplay";
+                }
+            }, 800); // 800ms per turn
+        }
     };
     
     // Load local replays on the landing page
@@ -410,4 +444,163 @@ function calculateHongKongScore(snapshot, winnerName) {
     }
 
     return `${fan} Fan: ` + patterns.join(", ");
+}
+
+function renderAnalyticsGraph(history, winner, maxTurnIdx) {
+    const container = document.getElementById('replay-analytics-graph');
+    if (!container || !history || history.length === 0) return;
+
+    let lastDanger = 0; // Carry over danger for continuity
+
+    const dataPoints = history.map((snap, idx) => {
+        let shanten = 8;
+        let ukeire = 0;
+        let fan = 1;
+        let danger = lastDanger;
+
+        let totalShanten = 0;
+        let numPlayers = 0;
+        let threatLevel = 0;
+
+        // Base map for Ukeire
+        const visibleMap = {};
+        (snap.centerDiscards || []).forEach(t => { visibleMap[t.suit + t.value] = (visibleMap[t.suit + t.value] || 0) + 1; });
+        for (const op of Object.values(snap.players)) {
+            (op.melds || []).forEach(m => m.forEach(t => { visibleMap[t.suit + t.value] = (visibleMap[t.suit + t.value] || 0) + 1; }));
+            
+            if (op.melds) threatLevel += op.melds.length * 2;
+            totalShanten += calculateShanten(op.hand, op.melds);
+            numPlayers++;
+        }
+        
+        let avgShanten = numPlayers > 0 ? (totalShanten / numPlayers) : 8;
+
+        if (winner && snap.players[winner] && snap.players[winner].hand) {
+            const wHand = snap.players[winner].hand;
+            shanten = calculateShanten(wHand, snap.players[winner].melds);
+            
+            // Add winner hand to visible map
+            (wHand || []).forEach(t => { visibleMap[t.suit + t.value] = (visibleMap[t.suit + t.value] || 0) + 1; });
+            ukeire = calculateUkeire(wHand, snap.players[winner].melds, shanten, visibleMap);
+
+            // Danger tracking
+            if (idx > 0 && history[idx-1].currentTurn === winner) {
+                const prevPool = history[idx-1].centerDiscards || [];
+                const currPool = snap.centerDiscards || [];
+                if (currPool.length > prevPool.length) {
+                    const lastDiscard = currPool[currPool.length - 1];
+                    const centerMap = {};
+                    prevPool.forEach(t => { centerMap[t.suit + t.value] = true; });
+                    danger = getDangerPercentage(lastDiscard, centerMap).pct;
+                    lastDanger = danger;
+                }
+            }
+            
+            // Expected Fan
+            const scoreStr = calculateHongKongScore(snap, winner);
+            const match = scoreStr.match(/^(\d+) Fan/);
+            if (match) fan = parseInt(match[1]);
+        }
+        
+        return { turn: idx + 1, shanten, threatLevel, ukeire, avgShanten, danger, fan };
+    });
+
+    const w = 850;
+    const h = 250; // Taller to fit everything
+    const padding = 35;
+    const turns = dataPoints.length;
+    
+    const scaleX = (idx) => padding + (idx / Math.max(1, turns - 1)) * (w - padding * 2);
+    const scaleY = (val, maxVal, inverted = false) => {
+        let ratio = val / maxVal;
+        if (ratio > 1) ratio = 1;
+        if (ratio < 0) ratio = 0;
+        return inverted ? h - padding - (ratio * (h - padding * 2)) : padding + ((1 - ratio) * (h - padding * 2));
+    };
+
+    let shantenPath = "", threatPath = "", ukeirePath = "", avgShantenPath = "", dangerPath = "", fanPath = "";
+
+    dataPoints.forEach((d, i) => {
+        if (i > maxTurnIdx) return;
+        const x = scaleX(i);
+        const yShanten = scaleY(d.shanten, 8, false); // Inverted (0 is best, bottom of graph)
+        const yThreat = scaleY(d.threatLevel, 16, true);
+        const yUkeire = scaleY(d.ukeire, 30, true);
+        const yAvgShanten = scaleY(d.avgShanten, 8, false);
+        const yDanger = scaleY(d.danger, 100, true);
+        const yFan = scaleY(d.fan, 10, true);
+        
+        if (i === 0) {
+            shantenPath += `M ${x},${yShanten} `;
+            threatPath += `M ${x},${yThreat} `;
+            ukeirePath += `M ${x},${yUkeire} `;
+            avgShantenPath += `M ${x},${yAvgShanten} `;
+            dangerPath += `M ${x},${yDanger} `;
+            fanPath += `M ${x},${yFan} `;
+        } else {
+            shantenPath += `L ${x},${yShanten} `;
+            threatPath += `L ${x},${yThreat} `;
+            ukeirePath += `L ${x},${yUkeire} `;
+            avgShantenPath += `L ${x},${yAvgShanten} `;
+            dangerPath += `L ${x},${yDanger} `;
+            fanPath += `L ${x},${yFan} `;
+        }
+    });
+
+    const svg = `
+        <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1rem;">Game Timeline Analytics</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 15px; margin-bottom: 10px; font-size: 0.8em; align-items: center; justify-content: center;">
+            <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px;height:12px;background:#6366f1;border-radius:50%;"></div><span>Winner Shanten</span></div>
+            <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px;height:2px;background:#8b5cf6;"></div><span>Avg Table Shanten</span></div>
+            <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px;height:12px;background:#10b981;border-radius:50%;"></div><span>Winner Ukeire</span></div>
+            <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px;height:12px;background:#f59e0b;border-radius:50%;"></div><span>Winner Discard Danger</span></div>
+            <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px;height:12px;background:#ef4444;border-radius:50%;"></div><span>Table Threat (Melds)</span></div>
+            <div style="display: flex; align-items: center; gap: 5px;"><div style="width:12px;height:12px;background:#0ea5e9;border-radius:50%;"></div><span>Expected Fan</span></div>
+        </div>
+        <svg viewBox="0 0 ${w} ${h}" width="100%" height="250" style="background: rgba(0,0,0,0.2); border-radius: 4px; overflow: visible;">
+            <!-- Y-Axis Grid Lines & Labels (Mapped to Shanten scale 0-8) -->
+            ${[0, 2, 4, 6, 8].map(val => {
+                const y = scaleY(val, 8, false);
+                return `<line x1="${padding}" y1="${y}" x2="${w-padding}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+                        <text x="${padding-10}" y="${y+4}" fill="#888" font-size="10" text-anchor="end">${val}</text>`;
+            }).join('')}
+            <text x="${padding-10}" y="${padding-10}" fill="#888" font-size="10" text-anchor="end">Shanten</text>
+            
+            <!-- X-Axis Labels (Turn Numbers) -->
+            ${dataPoints.map((d, i) => {
+                // Show label every 5 turns, plus the first and last turn
+                if (i === 0 || i === turns - 1 || (i + 1) % 5 === 0) {
+                    const x = scaleX(i);
+                    return `<text x="${x}" y="${h - padding + 15}" fill="#888" font-size="10" text-anchor="middle">T${d.turn}</text>
+                            <line x1="${x}" y1="${h - padding}" x2="${x}" y2="${h - padding + 4}" stroke="#888" stroke-width="1" />`;
+                }
+                return '';
+            }).join('')}
+            
+            <!-- Paths -->
+            <path d="${avgShantenPath}" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="2 4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="${threatPath}" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="${dangerPath}" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="${fanPath}" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="${ukeirePath}" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="${shantenPath}" fill="none" stroke="#6366f1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+            
+            <!-- Points (Only up to maxTurnIdx) -->
+            ${dataPoints.slice(0, maxTurnIdx + 1).map((d, i) => {
+                const x = scaleX(i);
+                return `
+                    <circle cx="${x}" cy="${scaleY(d.avgShanten, 8, false)}" r="2" fill="#8b5cf6" />
+                    <circle cx="${x}" cy="${scaleY(d.threatLevel, 16, true)}" r="3" fill="#ef4444" />
+                    <circle cx="${x}" cy="${scaleY(d.danger, 100, true)}" r="3" fill="#f59e0b" />
+                    <circle cx="${x}" cy="${scaleY(d.fan, 10, true)}" r="3" fill="#0ea5e9" />
+                    <circle cx="${x}" cy="${scaleY(d.ukeire, 30, true)}" r="4" fill="#10b981" />
+                    <circle cx="${x}" cy="${scaleY(d.shanten, 8, false)}" r="4" fill="#6366f1" stroke="#1e1e1e" stroke-width="2">
+                        <title>Turn ${d.turn}: Shanten ${d.shanten} | Ukeire ${d.ukeire} | Avg Shanten ${d.avgShanten.toFixed(1)} | Danger ${d.danger}% | Threat ${d.threatLevel} | Fan ${d.fan}</title>
+                    </circle>
+                `;
+            }).join('')}
+        </svg>
+    `;
+    
+    container.innerHTML = svg;
 }

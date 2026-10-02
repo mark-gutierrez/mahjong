@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mahjong Realtime</title>
+    <link rel="icon" href="favicon.jpg" type="image/jpeg">
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
 </head>
@@ -99,11 +100,16 @@
                     <button id="btn-exit-replay" class="btn-secondary">Back to Lobby</button>
                 </div>
                 
+                <div id="replay-analytics-graph" style="margin-bottom: 20px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                    <!-- Custom SVG Graph dynamically rendered here -->
+                </div>
+                
                 <div id="replay-board" style="display: flex; flex-direction: column; gap: 20px; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 8px;">
                     <!-- Replay dynamically rendered here -->
                 </div>
 
                 <div style="margin-top: 20px; display: flex; align-items: center; gap: 15px;">
+                    <button id="btn-replay-autoplay" class="btn-primary">▶ Autoplay</button>
                     <button id="btn-replay-prev" class="btn-secondary">◀ Prev Turn</button>
                     <input type="range" id="replay-slider" min="0" max="0" value="0" style="flex: 1;" />
                     <button id="btn-replay-next" class="btn-secondary">Next Turn ▶</button>
