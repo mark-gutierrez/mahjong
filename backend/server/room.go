@@ -220,8 +220,8 @@ func (r *Room) Run() {
 			}
 
 			if action.Action == "execute_steal" {
-				if r.TurnTimer != nil { r.TurnTimer.Stop() }
 				if action.Data == "mahjong" {
+					if r.TurnTimer != nil { r.TurnTimer.Stop() }
 					r.BroadcastGameOver(action.Client.Nickname)
 				} else {
 					success := r.Game.ExecuteAction(action.Client.Nickname, action.Data)
@@ -343,13 +343,21 @@ func (r *Room) BroadcastGameOver(winner string) {
 	
 	roundPoints := make(map[string]int)
 	if r.Game != nil {
+		winPoints := 0
+		if winner != "DRAW" && r.Game.Players[winner] != nil {
+			_, pts := engine.CalculateScore(r.Game.Players[winner].Hand, r.Game.Players[winner].Melds)
+			winPoints = pts
+		}
+
 		for _, pName := range r.Game.TurnOrder {
 			if pName == winner {
-				roundPoints[pName] = 50
-				r.Scores[pName] += 50
+				roundPoints[pName] = winPoints * 3 // Winner gets points from 3 losers
+				r.Scores[pName] += roundPoints[pName]
+			} else if winner != "DRAW" {
+				roundPoints[pName] = -winPoints
+				r.Scores[pName] -= winPoints
 			} else {
-				roundPoints[pName] = -10
-				r.Scores[pName] -= 10
+				roundPoints[pName] = 0 // DRAW
 			}
 		}
 	}

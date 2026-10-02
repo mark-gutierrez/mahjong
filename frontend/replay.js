@@ -281,10 +281,19 @@ async function loadReplaysList() {
                 const card = document.createElement('div');
                 card.style.cssText = "background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.1);";
                 
+                let scoreText = "";
+                if (r.winner === "DRAW") {
+                    scoreText = "Exhaustive Draw (0 Fan)";
+                } else if (r.history && r.history.length > 0) {
+                    const lastSnap = r.history[r.history.length - 1];
+                    scoreText = calculateHongKongScore(lastSnap, r.winner);
+                }
+
                 card.innerHTML = `
                     <div>
                         <div style="font-weight: 600; margin-bottom: 4px;">Winner: <span style="color: var(--accent);">${r.winner}</span></div>
-                        <div style="font-size: 0.8em; color: #aaa;">${dateStr} • ${r.history.length} Turns</div>
+                        <div style="font-size: 0.8em; color: #aaa; margin-bottom: 4px;">${dateStr} • ${r.history.length} Turns</div>
+                        <div style="font-size: 0.85em; color: #a5b4fc; background: rgba(99,102,241,0.15); padding: 2px 6px; border-radius: 4px; display: inline-block;">🏆 ${scoreText}</div>
                     </div>
                 `;
                 
@@ -325,4 +334,80 @@ async function loadReplaysList() {
     } catch (err) {
         console.error("Failed to load replays", err);
     }
+}
+
+function calculateHongKongScore(snapshot, winnerName) {
+    if (!snapshot || !snapshot.players) return "Unknown";
+    const ps = snapshot.players[winnerName];
+    if (!ps) return "Unknown";
+
+    const hand = ps.hand || [];
+    const melds = ps.melds || [];
+
+    const allTiles = [...hand];
+    melds.forEach(m => allTiles.push(...m));
+
+    let suits = new Set();
+    let hasHonor = false;
+    let hasTerminalOrHonor = false;
+
+    allTiles.forEach(t => {
+        if (['wind', 'dragon'].includes(t.suit)) {
+            hasHonor = true;
+            hasTerminalOrHonor = true;
+        } else {
+            suits.add(t.suit);
+            if (t.value === '1' || t.value === '9') {
+                hasTerminalOrHonor = true;
+            }
+        }
+    });
+
+    let fan = 0;
+    let patterns = [];
+
+    // Suit checks
+    if (suits.size === 1 && hasHonor) {
+        fan += 3;
+        patterns.push("Half Flush (3 Fan)");
+    } else if (suits.size === 1 && !hasHonor) {
+        fan += 6;
+        patterns.push("Full Flush (6 Fan)");
+    } else if (suits.size === 0 && hasHonor) {
+        fan += 10;
+        patterns.push("All Honors (Max Fan)");
+    }
+
+    // All Pungs check
+    let isAllPung = true;
+    melds.forEach(m => {
+        if (m.length < 3) isAllPung = false;
+        else if (m[0].value !== m[1].value) isAllPung = false; // Chow
+    });
+
+    const counts = {};
+    hand.forEach(t => counts[t.suit + t.value] = (counts[t.suit + t.value] || 0) + 1);
+    let pairs = 0;
+    Object.values(counts).forEach(c => {
+        if (c === 2) pairs++;
+        else if (c !== 3 && c !== 4) isAllPung = false;
+    });
+
+    if (isAllPung && pairs === 1) {
+        fan += 3;
+        patterns.push("All Pungs (3 Fan)");
+    }
+
+    // All Simples check
+    if (!hasTerminalOrHonor) {
+        fan += 1;
+        patterns.push("All Simples (1 Fan)");
+    }
+
+    if (fan === 0) {
+        fan = 1;
+        patterns.push("Common Hand (1 Fan)");
+    }
+
+    return `${fan} Fan: ` + patterns.join(", ");
 }

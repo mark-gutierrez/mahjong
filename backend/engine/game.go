@@ -307,6 +307,86 @@ func IsWinningHand(hand []Tile) bool {
 	return false
 }
 
+func CalculateScore(hand []Tile, melds [][]Tile) (int, int) {
+	allTiles := append([]Tile{}, hand...)
+	for _, m := range melds {
+		allTiles = append(allTiles, m...)
+	}
+
+	suits := make(map[string]bool)
+	hasHonor := false
+	hasTerminalOrHonor := false
+
+	for _, t := range allTiles {
+		if t.Suit == SuitWind || t.Suit == SuitDragon {
+			hasHonor = true
+			hasTerminalOrHonor = true
+		} else {
+			suits[string(t.Suit)] = true
+			if t.Value == "1" || t.Value == "9" {
+				hasTerminalOrHonor = true
+			}
+		}
+	}
+
+	fan := 0
+	if len(suits) == 1 && hasHonor {
+		fan += 3
+	} else if len(suits) == 1 && !hasHonor {
+		fan += 6
+	} else if len(suits) == 0 && hasHonor {
+		fan += 10
+	}
+
+	isAllPung := true
+	for _, m := range melds {
+		if len(m) < 3 {
+			isAllPung = false
+		} else if m[0].Value != m[1].Value {
+			isAllPung = false
+		}
+	}
+
+	counts := make(map[string]int)
+	for _, t := range hand {
+		counts[string(t.Suit)+t.Value]++
+	}
+	pairs := 0
+	for _, c := range counts {
+		if c == 2 {
+			pairs++
+		} else if c != 3 && c != 4 {
+			isAllPung = false
+		}
+	}
+
+	if isAllPung && pairs == 1 {
+		fan += 3
+	}
+
+	if !hasTerminalOrHonor {
+		fan += 1
+	}
+
+	if fan == 0 {
+		fan = 1
+	}
+
+	points := 10
+	switch fan {
+	case 1: points = 10
+	case 2: points = 20
+	case 3: points = 40
+	case 4: points = 80
+	case 5: points = 120
+	case 6: points = 160
+	default:
+		if fan >= 7 { points = 320 }
+	}
+
+	return fan, points
+}
+
 func checkMelds(tiles []Tile) bool {
 	if len(tiles) == 0 {
 		return true
