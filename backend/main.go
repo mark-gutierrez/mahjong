@@ -31,10 +31,8 @@ func main() {
 
 	http.Handle("/ws", wsServer)
 
-	// Health check endpoint for Render to know the app is live
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("Mahjong Backend is running!"))
-	})
+	// Serve the frontend directory (including WebAssembly and HTML files)
+	http.Handle("/", http.FileServer(http.Dir("../frontend")))
 
 	// Render provides the PORT environment variable automatically
 	port := os.Getenv("PORT")

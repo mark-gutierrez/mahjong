@@ -1,0 +1,329 @@
+let model;
+const MODEL_SAVE_PATH = 'indexeddb://mahjong-bot-v1';
+
+function log(msg) {
+    const logs = document.getElementById('logs');
+    const div = document.createElement('div');
+    div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    logs.appendChild(div);
+    
+    // Automatically flush logs to keep the browser running at lightning speed
+    while (logs.children.length > 200) {
+        logs.removeChild(logs.firstChild);
+    }
+    
+    logs.scrollTop = logs.scrollHeight;
+}
+
+// 1. Define or Load the Neural Network
+async function initModel() {
+    try {
+        log("Attempting to load existing model from IndexedDB...");
+        model = await tf.loadLayersModel(MODEL_SAVE_PATH);
+        log("Model loaded successfully!");
+    } catch (e) {
+        log("No existing model found. Creating a new brain from scratch...");
+        
+        // Define Architecture
+        // Input: We will eventually feed it game state (e.g., 34 tiles in hand, threat levels).
+        // For this scaffold, let's assume the input shape is a 1D tensor of size 50.
+        model = tf.sequential();
+        
+        // Input Layer
+        model.add(tf.layers.dense({ units: 128, activation: 'relu', inputShape: [50] }));
+        
+        // Hidden Layers
+        model.add(tf.layers.dense({ units: 128, activation: 'relu' }));
+        model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
+        
+        // Output Layer: 34 possible tiles to discard (softmax gives us a probability distribution)
+        model.add(tf.layers.dense({ units: 34, activation: 'softmax' }));
+        
+        log("New Neural Network architecture created.");
+        
+        // Save it immediately so it exists next time
+        await model.save(MODEL_SAVE_PATH);
+        log("Initial randomized model saved to IndexedDB.");
+    }
+    
+    // We MUST compile the model after loading it from IndexedDB because 
+    // loadLayersModel only restores the weights, not the optimizer!
+    model.compile({
+        optimizer: 'adam',
+        loss: 'categoricalCrossentropy',
+        metrics: ['accuracy']
+    });
+    
+    log("Model compiled and ready for training.");
+    document.getElementById('model-status').innerText = "Loaded & Ready!";
+    document.getElementById('model-status').style.color = "#10b981";
+}
+
+document.getElementById('btn-init-model').addEventListener('click', initModel);
+
+document.getElementById('btn-clear-model').addEventListener('click', async () => {
+    try {
+        await tf.io.removeModel(MODEL_SAVE_PATH);
+        log("Model successfully wiped from IndexedDB.");
+        document.getElementById('model-status').innerText = "Wiped";
+        document.getElementById('model-status').style.color = "#ef4444";
+        model = null;
+    } catch (e) {
+        log("Nothing to wipe.");
+    }
+});
+
+// 2. Training Loop & Virtual Bot Client
+let isTraining = false;
+let bots = [];
+let gamesPlayed = 0;
+let currentRoomCode = null;
+
+class VirtualBot {
+    constructor(id) {
+        this.name = `AI_Bot_${id}`;
+        this.isHost = (id === 1);
+        this.ws = new WebSocket('ws://localhost:8080/ws');
+        this.experienceMemory = []; // Stores [stateTensor, actionIndex]
+        this.hasPlayedThisTurn = false;
+        
+        this.ws.onopen = () => {
+            log(`${this.name} connected to server.`);
+            
+            // Host creates the room
+            if (this.isHost) {
+                this.send({ action: "create_room", nickname: this.name });
+            }
+        };
+
+        this.ws.onmessage = async (e) => {
+            if (!isTraining) return;
+            const msg = JSON.parse(e.data);
+            
+            if (this.isHost && msg.type !== 'player_list') {
+                log(`[${this.name}] Raw MSG: ${msg.type}`);
+            }
+            
+            if (msg.type === "room_created" && this.isHost) {
+                currentRoomCode = msg.roomCode;
+                log(`Host created room ${currentRoomCode}. Bots joining...`);
+                // Tell other bots to join
+                bots.forEach(b => {
+                    if (!b.isHost) {
+                        b.send({ action: "join_room", nickname: b.name, roomCode: currentRoomCode });
+                    }
+                });
+                
+                // Wait a second for everyone to join, then start!
+                setTimeout(() => {
+                    if (isTraining) {
+                        log(`Starting game in ${currentRoomCode}...`);
+                        this.send({ action: "start_game" });
+                    }
+                }, 1000);
+            }
+            
+            if (msg.type === "game_update") {
+                // Only host logs this to avoid 4x spam
+                if (this.isHost) {
+                    log(`[${this.name}] Received game_update. Current turn: ${msg.currentTurn}`);
+                }
+                
+                // If the turn has changed to someone else, reset our turn lock
+                if (msg.currentTurn !== this.name) {
+                    this.hasPlayedThisTurn = false;
+                }
+                
+                if (msg.currentTurn === this.name && msg.hand && !this.hasPlayedThisTurn) {
+                    this.hasPlayedThisTurn = true;
+                    // It's my turn! Let the Neural Network decide.
+                    log(`[${this.name}] taking turn. Hand size: ${msg.hand.length}`);
+                    try {
+                        await this.takeTurn(msg.hand);
+                    } catch (err) {
+                        log(`Error in takeTurn: ${err.message}`);
+                    }
+                } else if (msg.actions && msg.actions.length > 0) {
+                    // Someone else discarded, and we have the option to steal (Pong/Chow).
+                    // For now, our basic AI will just skip to keep the loop going.
+                    this.send({ action: "skip" });
+                }
+            } else if (msg.type === "game_over") {
+                await this.handleGameOver(msg.winner);
+            }
+        };
+    }
+
+    send(data) {
+        if (this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify(data));
+        } else {
+            // If the socket isn't open yet, queue it to send when it opens!
+            this.ws.addEventListener('open', () => {
+                this.ws.send(JSON.stringify(data));
+            }, { once: true });
+        }
+    }
+
+    // Convert the player's hand into a flat array for the Neural Network
+    vectorizeState(hand) {
+        // We have 34 possible tiles in Mahjong. 
+        // We will create an array of size 50 (to match our inputShape), 
+        // filling the first 34 slots with the counts of each tile in hand.
+        const state = new Array(50).fill(0);
+        
+        // Very basic mapping (Suit + Value -> Index)
+        // In a real production AI, this mapping must be perfect and cover all 34 tiles exactly.
+        hand.forEach(t => {
+            let offset = 0;
+            if (t.suit === 'character') offset = 0;
+            else if (t.suit === 'bamboo') offset = 9;
+            else if (t.suit === 'dot') offset = 18;
+            else if (t.suit === 'wind') offset = 27;
+            else if (t.suit === 'dragon') offset = 31;
+            
+            let val = parseInt(t.value) || 1; // Winds/Dragons map loosely for now
+            let index = offset + (val - 1);
+            if (index < 34) {
+                state[index] += 1;
+            }
+        });
+        return state;
+    }
+
+    async takeTurn(hand) {
+        try {
+            // 1. Convert state to Tensor
+            const stateArray = this.vectorizeState(hand);
+            const stateTensor = tf.tensor2d([stateArray]); // Shape [1, 50]
+            
+            // 2. Predict best move using the neural network
+            const predictions = model.predict(stateTensor);
+            const actionProbabilities = await predictions.data();
+            
+            // 3. Find the highest probability action that is actually LEGAL (we must have the tile in hand)
+            let bestTile = null;
+            let highestProb = -1;
+            let bestActionIndex = -1;
+            
+            for (let i = 0; i < hand.length; i++) {
+                let fakeActionIndex = i % 34; 
+                let prob = actionProbabilities[fakeActionIndex];
+                
+                if (prob > highestProb) {
+                    highestProb = prob;
+                    bestTile = hand[i];
+                    bestActionIndex = fakeActionIndex;
+                }
+            }
+            
+            if (!bestTile) {
+                log(`[${this.name}] ERROR: No best tile found! Hand length: ${hand.length}`);
+                return;
+            }
+
+            // Store this memory for training later!
+            this.experienceMemory.push({ state: stateArray, actionIndex: bestActionIndex });
+            
+            // Clean up memory
+            stateTensor.dispose();
+            predictions.dispose();
+
+            // 4. Execute the move! 
+            setTimeout(() => {
+                log(`[${this.name}] Played tile: ${bestTile.suit} ${bestTile.value} (ID: ${bestTile.id})`);
+                this.send({ action: "discard_tile", tileId: bestTile.id });
+            }, 50);
+        } catch (e) {
+            log(`[${this.name}] CRITICAL ERROR in takeTurn: ${e.message}`);
+        }
+    }
+
+    async handleGameOver(winner) {
+        // Did we win?
+        const reward = (winner === this.name) ? 1.0 : -0.1; 
+        
+        log(`${this.name} finished game. Winner was ${winner}. Reward: ${reward}`);
+        
+        if (this.isHost) {
+            // Collect memories from ALL bots for a single batch training step
+            let allStates = [];
+            let allTargets = [];
+            
+            bots.forEach(b => {
+                if (b.experienceMemory.length > 0) {
+                    const states = b.experienceMemory.map(m => m.state);
+                    const targets = b.experienceMemory.map(m => {
+                        let t = new Array(34).fill(0);
+                        const botReward = (winner === b.name) ? 1.0 : -0.1;
+                        t[m.actionIndex] = botReward > 0 ? 1.0 : 0.01; 
+                        return t;
+                    });
+                    
+                    allStates = allStates.concat(states);
+                    allTargets = allTargets.concat(targets);
+                    b.experienceMemory = []; // Clear for next round
+                }
+            });
+            
+            // TRAIN THE MODEL!
+            if (allStates.length > 0) {
+                try {
+                    const x = tf.tensor2d(allStates);
+                    const y = tf.tensor2d(allTargets);
+                    
+                    await model.fit(x, y, { epochs: 1, verbose: 0 });
+                    
+                    x.dispose();
+                    y.dispose();
+                } catch (err) {
+                    log(`[Host] Batch Training error: ${err.message}`);
+                }
+            }
+            
+            gamesPlayed++;
+            document.getElementById('games-played').innerText = gamesPlayed;
+            
+            // Save the brain every 5 games
+            if (gamesPlayed % 5 === 0) {
+                log("Saving updated brain to IndexedDB...");
+                await model.save(MODEL_SAVE_PATH);
+            }
+            
+            // Start the next generation immediately!
+            if (isTraining) {
+                setTimeout(() => {
+                    log(`Starting Generation ${gamesPlayed + 1}...`);
+                    this.send({ action: "start_game" });
+                }, 500);
+            }
+        }
+    }
+}
+
+document.getElementById('btn-start-training').addEventListener('click', () => {
+    if (!model) {
+        alert("Please initialize the model first!");
+        return;
+    }
+    if (isTraining) return;
+    
+    isTraining = true;
+    log("Starting self-play training loop...");
+    
+    // Spawn 4 bots if they don't exist
+    if (bots.length === 0) {
+        log("Spawning 4 Virtual Bots...");
+        for (let i = 1; i <= 4; i++) {
+            bots.push(new VirtualBot(i));
+        }
+    } else {
+        // If they already exist, just have the host start the game again
+        bots[0].send({ action: "start_game" });
+    }
+});
+
+document.getElementById('btn-stop-training').addEventListener('click', () => {
+    isTraining = false;
+    log("Training stopped. Bots will finish their current game and pause.");
+});
