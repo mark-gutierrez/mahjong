@@ -3,6 +3,8 @@ package engine
 import (
 	"math/rand"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -211,7 +213,7 @@ func (g *Game) ExecuteAction(playerName string, action string) bool {
 		return true
 	}
 	
-	if action == "chow" {
+	if strings.HasPrefix(action, "chow") {
 		nextPlayer := g.TurnOrder[(g.CurrentTurnIdx+1)%len(g.TurnOrder)]
 		if playerName != nextPlayer { return false }
 		
@@ -229,12 +231,24 @@ func (g *Game) ExecuteAction(playerName string, action string) bool {
 		}
 		
 		v1, v2 := -1, -1
-		if hasTile(valInt-2) && hasTile(valInt-1) {
-			v1, v2 = valInt-2, valInt-1
-		} else if hasTile(valInt-1) && hasTile(valInt+1) {
-			v1, v2 = valInt-1, valInt+1
-		} else if hasTile(valInt+1) && hasTile(valInt+2) {
-			v1, v2 = valInt+1, valInt+2
+		if strings.HasPrefix(action, "chow:") {
+			parts := strings.Split(strings.TrimPrefix(action, "chow:"), ",")
+			if len(parts) == 2 {
+				p1, err1 := strconv.Atoi(parts[0])
+				p2, err2 := strconv.Atoi(parts[1])
+				if err1 == nil && err2 == nil && hasTile(p1) && hasTile(p2) {
+					v1, v2 = p1, p2
+				}
+			}
+		}
+		if v1 == -1 {
+			if hasTile(valInt-2) && hasTile(valInt-1) {
+				v1, v2 = valInt-2, valInt-1
+			} else if hasTile(valInt-1) && hasTile(valInt+1) {
+				v1, v2 = valInt-1, valInt+1
+			} else if hasTile(valInt+1) && hasTile(valInt+2) {
+				v1, v2 = valInt+1, valInt+2
+			}
 		}
 		
 		if v1 != -1 {

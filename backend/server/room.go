@@ -312,8 +312,12 @@ func (r *Room) BroadcastGameState() {
 		state := r.Game.Players[client.Nickname]
 
 		var availableActions []string
+		var lastDiscard *engine.Tile
+		discarderName := ""
 		if r.Game.Interrupt != nil && r.Game.Interrupt.Active {
 			availableActions = r.Game.Interrupt.Actions[client.Nickname]
+			lastDiscard = &r.Game.Interrupt.DiscardedTile
+			discarderName = r.Game.Interrupt.DiscarderName
 		}
 
 		canMahjong := false
@@ -328,6 +332,8 @@ func (r *Room) BroadcastGameState() {
 			"discards":       r.Game.CenterDiscards,
 			"currentTurn":    r.Game.TurnOrder[r.Game.CurrentTurnIdx],
 			"actions":        availableActions,
+			"lastDiscard":    lastDiscard,
+			"discarderName":  discarderName,
 			"canMahjong":     canMahjong,
 			"players":        publicPlayers,
 			"actionDeadline": r.ActionDeadline,

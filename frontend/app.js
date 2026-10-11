@@ -117,6 +117,172 @@ function getTileFace(tile) {
     return `<svg viewBox="0 0 100 130" width="100%" height="100%">${inner}${cornerText}${caption}</svg>`;
 }
 
+// --- Meld Hover Preview Helpers ---
+function findChowCombinations(hand, discardTile) {
+    if (!discardTile || !discardTile.suit || !discardTile.value) return [];
+    const validSuits = ['bamboo', 'character', 'dot'];
+    const suit = discardTile.suit.toLowerCase();
+    if (!validSuits.includes(suit)) return [];
+    
+    const dVal = parseInt(discardTile.value, 10);
+    if (isNaN(dVal) || dVal < 1 || dVal > 9) return [];
+    
+    const tilesByVal = {};
+    for (const t of hand) {
+        if (t.suit.toLowerCase() === suit) {
+            const val = parseInt(t.value, 10);
+            if (!isNaN(val)) {
+                if (!tilesByVal[val]) tilesByVal[val] = [];
+                tilesByVal[val].push(t);
+            }
+        }
+    }
+    
+    const combs = [];
+    // Pattern 1: [dVal - 2, dVal - 1] + dVal
+    if (dVal >= 3 && tilesByVal[dVal - 2] && tilesByVal[dVal - 1]) {
+        combs.push({
+            type: 'chow',
+            handTiles: [tilesByVal[dVal - 2][0], tilesByVal[dVal - 1][0]],
+            sequenceValues: [dVal - 2, dVal - 1],
+            allValues: [dVal - 2, dVal - 1, dVal],
+            actionData: `chow:${dVal - 2},${dVal - 1}`,
+            label: `${dVal - 2} - ${dVal - 1} + [${dVal}]`
+        });
+    }
+    // Pattern 2: [dVal - 1, dVal + 1] + dVal
+    if (dVal >= 2 && dVal <= 8 && tilesByVal[dVal - 1] && tilesByVal[dVal + 1]) {
+        combs.push({
+            type: 'chow',
+            handTiles: [tilesByVal[dVal - 1][0], tilesByVal[dVal + 1][0]],
+            sequenceValues: [dVal - 1, dVal + 1],
+            allValues: [dVal - 1, dVal, dVal + 1],
+            actionData: `chow:${dVal - 1},${dVal + 1}`,
+            label: `${dVal - 1} + [${dVal}] + ${dVal + 1}`
+        });
+    }
+    // Pattern 3: [dVal + 1, dVal + 2] + dVal
+    if (dVal <= 7 && tilesByVal[dVal + 1] && tilesByVal[dVal + 2]) {
+        combs.push({
+            type: 'chow',
+            handTiles: [tilesByVal[dVal + 1][0], tilesByVal[dVal + 2][0]],
+            sequenceValues: [dVal + 1, dVal + 2],
+            allValues: [dVal, dVal + 1, dVal + 2],
+            actionData: `chow:${dVal + 1},${dVal + 2}`,
+            label: `[${dVal}] + ${dVal + 1} - ${dVal + 2}`
+        });
+    }
+    return combs;
+}
+
+function findPongCombination(hand, discardTile) {
+    if (!discardTile || !discardTile.suit || !discardTile.value) return null;
+    const matches = hand.filter(t => t.suit.toLowerCase() === discardTile.suit.toLowerCase() && t.value === discardTile.value);
+    if (matches.length >= 2) {
+        return {
+            type: 'pong',
+            handTiles: matches.slice(0, 2),
+            allValues: [discardTile.value, discardTile.value, discardTile.value],
+            actionData: 'pung',
+            label: `Triplet of ${discardTile.value} ${discardTile.suit}`
+        };
+    }
+    return null;
+}
+
+function findKongCombination(hand, discardTile) {
+    if (!discardTile || !discardTile.suit || !discardTile.value) return null;
+    const matches = hand.filter(t => t.suit.toLowerCase() === discardTile.suit.toLowerCase() && t.value === discardTile.value);
+    if (matches.length >= 3) {
+        return {
+            type: 'kong',
+            handTiles: matches.slice(0, 3),
+            allValues: [discardTile.value, discardTile.value, discardTile.value, discardTile.value],
+            actionData: 'kong',
+            label: `Quad of ${discardTile.value} ${discardTile.suit}`
+        };
+    }
+    return null;
+}
+
+function highlightMeldPreview(handTileIds, targetDiscard, meldType, label) {
+    clearMeldPreview();
+    
+    const handContainer = document.getElementById('my-hand');
+    if (handContainer) {
+        handContainer.classList.add('meld-preview-active');
+    }
+    
+    // Highlight matching tiles in player's hand
+    if (handTileIds && handTileIds.length > 0) {
+        handTileIds.forEach(id => {
+            const tileEl = handContainer ? handContainer.querySelector(`.tile[data-tile-id="${id}"]`) : null;
+            if (tileEl) {
+                tileEl.classList.add('meld-hand-highlight');
+                const tag = document.createElement('div');
+                tag.className = 'tile-meld-tag';
+                tag.innerText = meldType || 'MELD';
+                tileEl.appendChild(tag);
+            }
+        });
+    }
+    
+    // Highlight discarded tile on table (center pool)
+    const pool = document.getElementById('discard-pool');
+    let discardEl = null;
+    if (pool) {
+        if (targetDiscard && targetDiscard.id) {
+            discardEl = pool.querySelector(`.tile[data-tile-id="${targetDiscard.id}"]`);
+        }
+        if (!discardEl) {
+            discardEl = pool.querySelector('.tile.last-discard-tile') || pool.lastElementChild;
+        }
+    }
+    if (discardEl) {
+        discardEl.classList.add('meld-discard-highlight');
+        const dTag = document.createElement('div');
+        dTag.className = 'tile-discard-tag';
+        dTag.innerText = 'CLAIM';
+        discardEl.appendChild(dTag);
+    }
+    
+    // Also highlight matching opponent latest discard if present
+    const oppDiscardEl = document.querySelector('.opponent-card .tile.latest-opp-discard');
+    if (oppDiscardEl) {
+        oppDiscardEl.classList.add('meld-discard-highlight');
+    }
+    
+    // Update preview hint banner in action prompt
+    const hintBanner = document.getElementById('action-preview-hint');
+    if (hintBanner && label) {
+        hintBanner.style.display = 'block';
+        hintBanner.innerHTML = `Previewing <strong>${meldType}</strong>: <span style="color: #fbbf24; font-weight: bold;">${label}</span>`;
+    }
+}
+
+function clearMeldPreview() {
+    const handContainer = document.getElementById('my-hand');
+    if (handContainer) {
+        handContainer.classList.remove('meld-preview-active');
+    }
+    
+    document.querySelectorAll('.meld-hand-highlight').forEach(el => {
+        el.classList.remove('meld-hand-highlight');
+        el.querySelectorAll('.tile-meld-tag').forEach(t => t.remove());
+    });
+    
+    document.querySelectorAll('.meld-discard-highlight').forEach(el => {
+        el.classList.remove('meld-discard-highlight');
+        el.querySelectorAll('.tile-discard-tag').forEach(t => t.remove());
+    });
+    
+    const hintBanner = document.getElementById('action-preview-hint');
+    if (hintBanner) {
+        hintBanner.style.display = 'none';
+        hintBanner.innerHTML = '';
+    }
+}
+
 ws.onmessage = (event) => {
     lastGameDataRaw = event.data;
     console.log("📨 Message from server:", event.data);
@@ -204,7 +370,8 @@ ws.onmessage = (event) => {
             data.players.forEach(p => {
                 if (p.nickname === myName) return;
                 const lastDiscard = (p.discards && p.discards.length > 0) ? p.discards[p.discards.length - 1] : null;
-                const discardHtml = lastDiscard ? `<div class="tile mini">${getTileFace(lastDiscard)}</div>` : `<div class="empty-slot"></div>`;
+                const isDiscarder = data.discarderName ? (p.nickname === data.discarderName) : true;
+                const discardHtml = lastDiscard ? `<div class="tile mini ${isDiscarder ? 'latest-opp-discard' : ''}" data-tile-id="${lastDiscard.id}" data-suit="${lastDiscard.suit}" data-value="${lastDiscard.value}">${getTileFace(lastDiscard)}</div>` : `<div class="empty-slot"></div>`;
                 const isOppTurn = data.currentTurn === p.nickname;
                 
                 let meldsHtml = '';
@@ -305,6 +472,9 @@ ws.onmessage = (event) => {
         sortedHand.forEach((tile, index) => {
             const tileDiv = document.createElement('div');
             tileDiv.className = 'tile' + (isMyTurn ? ' interactive' : '');
+            tileDiv.dataset.tileId = tile.id;
+            tileDiv.dataset.suit = tile.suit;
+            tileDiv.dataset.value = tile.value;
             tileDiv.style.position = 'relative';
             tileDiv.innerHTML = getTileFace(tile);
             
@@ -330,9 +500,15 @@ ws.onmessage = (event) => {
         const pool = document.getElementById('discard-pool');
         pool.innerHTML = '';
         if (data.discards) {
-            data.discards.forEach(tile => {
+            data.discards.forEach((tile, idx) => {
                 const t = document.createElement('div');
                 t.className = 'tile discarded';
+                t.dataset.tileId = tile.id;
+                t.dataset.suit = tile.suit;
+                t.dataset.value = tile.value;
+                if (idx === data.discards.length - 1) {
+                    t.classList.add('last-discard-tile');
+                }
                 t.innerHTML = getTileFace(tile);
                 pool.appendChild(t);
             });
@@ -358,47 +534,172 @@ ws.onmessage = (event) => {
         // Action Buttons
         const existingBtn = document.getElementById('action-buttons');
         if (existingBtn) existingBtn.remove();
+        clearMeldPreview();
+
+        const targetDiscard = data.lastDiscard || (data.discards && data.discards.length > 0 ? data.discards[data.discards.length - 1] : null);
+
         if (data.actions && data.actions.length > 0) {
             const btnContainer = document.createElement('div');
             btnContainer.id = 'action-buttons';
             btnContainer.className = 'action-buttons';
+
+            const hintBanner = document.createElement('div');
+            hintBanner.id = 'action-preview-hint';
+            hintBanner.className = 'action-preview-hint';
+            hintBanner.style.display = 'none';
+            btnContainer.appendChild(hintBanner);
+
+            const row = document.createElement('div');
+            row.className = 'action-buttons-row';
+
             data.actions.forEach(act => {
-                const btn = document.createElement('button');
-                btn.innerText = act.toUpperCase() + "!";
-                btn.onclick = () => { ws.send(JSON.stringify({action: "execute_steal", data: act})); };
-                btnContainer.appendChild(btn);
+                const actLower = act.toLowerCase();
+
+                if (actLower === 'chow') {
+                    const chowCombs = findChowCombinations(sortedHand, targetDiscard);
+                    if (chowCombs.length > 0) {
+                        chowCombs.forEach(comb => {
+                            const btn = document.createElement('button');
+                            btn.className = 'btn-action btn-chow';
+                            btn.innerHTML = `<span class="action-name">CHOW</span><span class="action-sub">${comb.label}</span>`;
+                            btn.addEventListener('mouseenter', () => {
+                                highlightMeldPreview(comb.handTiles.map(t => t.id), targetDiscard, 'CHOW', `${comb.label} (${targetDiscard ? targetDiscard.suit : ''})`);
+                            });
+                            btn.addEventListener('mouseleave', clearMeldPreview);
+                            btn.onclick = () => {
+                                clearMeldPreview();
+                                ws.send(JSON.stringify({ action: "execute_steal", data: comb.actionData }));
+                                btnContainer.remove();
+                            };
+                            row.appendChild(btn);
+                        });
+                    } else {
+                        // Fallback chow button if combinations list is empty
+                        const btn = document.createElement('button');
+                        btn.className = 'btn-action btn-chow';
+                        btn.innerHTML = `<span class="action-name">CHOW!</span>`;
+                        btn.onclick = () => {
+                            clearMeldPreview();
+                            ws.send(JSON.stringify({ action: "execute_steal", data: "chow" }));
+                            btnContainer.remove();
+                        };
+                        row.appendChild(btn);
+                    }
+                } else if (actLower === 'pung' || actLower === 'pong') {
+                    const pongComb = findPongCombination(sortedHand, targetDiscard);
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-action btn-pong';
+                    const subLabel = targetDiscard ? `3x ${targetDiscard.value} ${targetDiscard.suit}` : 'Triple';
+                    btn.innerHTML = `<span class="action-name">PONG!</span><span class="action-sub">${subLabel}</span>`;
+                    btn.addEventListener('mouseenter', () => {
+                        const tileIds = pongComb ? pongComb.handTiles.map(t => t.id) : [];
+                        highlightMeldPreview(tileIds, targetDiscard, 'PONG', subLabel);
+                    });
+                    btn.addEventListener('mouseleave', clearMeldPreview);
+                    btn.onclick = () => {
+                        clearMeldPreview();
+                        ws.send(JSON.stringify({ action: "execute_steal", data: "pung" }));
+                        btnContainer.remove();
+                    };
+                    row.appendChild(btn);
+                } else if (actLower === 'kong') {
+                    const kongComb = findKongCombination(sortedHand, targetDiscard);
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-action btn-kong';
+                    const subLabel = targetDiscard ? `4x ${targetDiscard.value} ${targetDiscard.suit}` : 'Quad';
+                    btn.innerHTML = `<span class="action-name">KONG!</span><span class="action-sub">${subLabel}</span>`;
+                    btn.addEventListener('mouseenter', () => {
+                        const tileIds = kongComb ? kongComb.handTiles.map(t => t.id) : [];
+                        highlightMeldPreview(tileIds, targetDiscard, 'KONG', subLabel);
+                    });
+                    btn.addEventListener('mouseleave', clearMeldPreview);
+                    btn.onclick = () => {
+                        clearMeldPreview();
+                        ws.send(JSON.stringify({ action: "execute_steal", data: "kong" }));
+                        btnContainer.remove();
+                    };
+                    row.appendChild(btn);
+                } else if (actLower === 'mahjong') {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-action btn-mahjong';
+                    btn.innerHTML = `<span class="action-name">MAHJONG!</span><span class="action-sub">Ron Win</span>`;
+                    btn.addEventListener('mouseenter', () => {
+                        highlightMeldPreview([], targetDiscard, 'WIN', `Claim winning tile from ${data.discarderName || 'Discard'}`);
+                    });
+                    btn.addEventListener('mouseleave', clearMeldPreview);
+                    btn.onclick = () => {
+                        clearMeldPreview();
+                        ws.send(JSON.stringify({ action: "execute_steal", data: "mahjong" }));
+                        btnContainer.remove();
+                    };
+                    row.appendChild(btn);
+                } else {
+                    const btn = document.createElement('button');
+                    btn.className = 'btn-action';
+                    btn.innerHTML = `<span class="action-name">${act.toUpperCase()}!</span>`;
+                    btn.onclick = () => {
+                        clearMeldPreview();
+                        ws.send(JSON.stringify({ action: "execute_steal", data: act }));
+                        btnContainer.remove();
+                    };
+                    row.appendChild(btn);
+                }
             });
+
+            // SKIP Button
             const skipBtn = document.createElement('button');
-            skipBtn.className = 'btn-secondary';
+            skipBtn.className = 'btn-skip';
             skipBtn.innerText = 'SKIP';
             skipBtn.onclick = () => {
-                ws.send(JSON.stringify({action: "skip"}));
+                clearMeldPreview();
+                ws.send(JSON.stringify({ action: "skip" }));
                 btnContainer.remove();
             };
-            btnContainer.appendChild(skipBtn);
+            row.appendChild(skipBtn);
+
+            btnContainer.appendChild(row);
             document.querySelector('.player-area').prepend(btnContainer);
         }
 
         if (data.canMahjong) {
             let btnContainer = document.getElementById('action-buttons');
+            let row = btnContainer ? btnContainer.querySelector('.action-buttons-row') : null;
             if (!btnContainer) {
                 btnContainer = document.createElement('div');
                 btnContainer.id = 'action-buttons';
                 btnContainer.className = 'action-buttons';
+                const hintBanner = document.createElement('div');
+                hintBanner.id = 'action-preview-hint';
+                hintBanner.className = 'action-preview-hint';
+                hintBanner.style.display = 'none';
+                btnContainer.appendChild(hintBanner);
+                row = document.createElement('div');
+                row.className = 'action-buttons-row';
+                btnContainer.appendChild(row);
                 document.querySelector('.player-area').prepend(btnContainer);
             }
             
             const btn = document.createElement('button');
-            btn.className = 'btn-primary';
-            btn.innerText = "MAHJONG!";
+            btn.className = 'btn-action btn-mahjong';
+            btn.innerHTML = `<span class="action-name">MAHJONG!</span><span class="action-sub">Declare Win</span>`;
+            btn.addEventListener('mouseenter', () => {
+                const hintBanner = document.getElementById('action-preview-hint');
+                if (hintBanner) {
+                    hintBanner.style.display = 'block';
+                    hintBanner.innerHTML = `Declare winning Mahjong hand (Tsumo)!`;
+                }
+            });
+            btn.addEventListener('mouseleave', clearMeldPreview);
             btn.onclick = () => {
-                ws.send(JSON.stringify({action: "declare_mahjong"}));
+                clearMeldPreview();
+                ws.send(JSON.stringify({ action: "declare_mahjong" }));
             };
-            btnContainer.appendChild(btn);
+            row.appendChild(btn);
         }
     }
 
     if (data.type === "game_over") {
+        clearMeldPreview();
         showScreen('lobby');
         
         // Save to IndexedDB via replay.js function
